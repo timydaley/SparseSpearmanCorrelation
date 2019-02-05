@@ -1,0 +1,39 @@
+---
+title: Efficient calculation of the Spearman correlation coefficient for large and
+  sparse matrices.
+author: "Timothy Daley"
+date: "2/4/2019"
+output: html_document
+---
+
+Consider a sparse and large matrix $X_{p \times n}$.  In our application of interest, $X_{p \times n}$ is a matrix of single cell ATAC-seq counts over $p$ regions and $n$ cells with $p \gg n$ ($p \approx 250,000$ and $n \approx 5,000$).  For an example, let the entries of $X$ be independent zero-inflated Poisson counts.
+
+```{r}
+nRegions = 250000
+nCells = 5000
+X = replicate(nCells, rbinom(n = nRegions, size = 1, prob = 0.1))
+dim(X)
+sum(X)
+X[which(X != 0)] = rpois(n = sum(X), lambda = 1)
+sum(X)
+sum(X > 0)
+# standard calculation of correlation coefficient
+system.time(testCor <- cor(X, method = "spearman"))
+
+# correlation usign sparse matrix
+sparseSpearmanCor <- function(sparseMat){
+  nCells = dim(sparseMat)[2]
+  nRegions = dim(sparseMat)[1]
+  colRankMeans = rep(nRegions/2 + 0.5, times = nCells) # average of a ranked vector
+  colRankSums = rep(nRegions*(nRegions + 1)/2, times = nCells) # sum of ranks
+  covmat = tcrossprod(colRankMeans, (-2*colRankSums + nRegions*colRankMeans))
+  crosspmat = as.matrix(Matrix::crossprod(apply(sparseMat, 2, rank, ties.method = "average")))
+  covmat = covmat + crosspmat
+  sdvec = sqrt(diag(covmat))
+  return(covmat/crossprod(t(sdvec)))
+}
+X.sparse = Matrix::Matrix(X, sparse = TRUE)
+system.time(testCor2 <- sparseSpearmanCor(X.sparse))
+all.equal(c(as.matrix(testCor)), c(as.matrix(testCor2)))
+```
+
