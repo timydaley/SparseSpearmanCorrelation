@@ -9,8 +9,8 @@ output: html_document
 Consider a sparse and large matrix $X_{p \times n}$.  In our application of interest, $X_{p \times n}$ is a matrix of single cell ATAC-seq counts over $p$ regions and $n$ cells with $p \gg n$ ($p \approx 250,000$ and $n \approx 5,000$).  For an example, let the entries of $X$ be independent zero-inflated Poisson counts.
 
 ```{r}
-nRegions = 250000
-nCells = 5000
+nRegions = 500
+nCells = 10
 X = replicate(nCells, rbinom(n = nRegions, size = 1, prob = 0.1))
 dim(X)
 sum(X)
@@ -37,3 +37,71 @@ system.time(testCor2 <- sparseSpearmanCor(X.sparse))
 all.equal(c(as.matrix(testCor)), c(as.matrix(testCor2)))
 ```
 
+```{r}
+# increase the dimensions
+nRegions = 400000
+nCells = 4000
+X = replicate(nCells, rbinom(n = nRegions, size = 1, prob = 0.1))
+dim(X)
+sum(X)
+X[which(X != 0)] = rpois(n = sum(X), lambda = 1)
+sum(X)
+sum(X > 0)
+# standard calculation of correlation coefficient
+system.time(testCor <- cor(X, method = "spearman"))
+
+# correlation usign sparse matrix
+X.sparse = Matrix::Matrix(X, sparse = TRUE)
+system.time(testCor2 <- sparseSpearmanCor(X.sparse))
+all.equal(c(as.matrix(testCor)), c(as.matrix(testCor2)))
+```
+
+We'll take advantage of the following observation: most entries are zero.  To be able to handle the sparse matrix format, we don't want these to change. We want to keep them as zeros and only modify the non-zero entries. 
+
+The ranks, when using the ties.method = "average" option, satisfy $\sum_{i = 1}^{p} \text{rank}(X_{i,n}) = p(p + 1)/2$.  Tying entries are equal to the average of the ranks.  Suppose there are $z_{n}$ zero entries in the $n$th column.  Then these will be set to $\frac{1}{z_{n}} \sum_{j = 1}^{z_{n}} j  = \frac{1}{z_{n}} \frac{z_{n} (z_{n} + 1) / 2} = \frac{z_{n}}{2}$.  
+
+Now, consider the non-zero entries.  If we were to rank these without the zero entries, then their rankings would add up to 
+$$
+\sum_{j = 1}^{p - z_{n}} j = (p - z_{n})(p - z_{n} + 1)/2 = p^{2}/2 - p z_{n} + p/2 + z_{n}^{2}/2 - z_{n}/2.
+$$
+In contrast, in the full rankings they should add up to 
+$$
+\sum_{j = z_{n} + 1}^{p} j = p (p + 1) /2 - z_{n} (z_{n} + 1) / 2 = p^{2} / 2 + p / 2 - z_{n}^{2} / 2 - z_{n} /2.
+$$
+If we add $z_{n}$ to their rankings without the zero entries, then they sum up to
+$$
+\sum_{j = 1}^{p - z_{n}} j + z_{n} =  (p - z_{n})(p - z_{n} + 1)/2 + (p - z_{n}) z_{n} = p^{2} / 2 + p/2 - z_{n}^{2} / 2 - z_{n} / 2,
+$$
+which agrees with the above.  
+
+Since adding and subtracting constants to all entries of a row does not change to covariance matrix,  we can compute the ranks of the non-zero entries and then add $(z_{n}/2 - 1/2)$ and the resulting ranks are equal to the full ranks minus $z_{n} + 1/2$.  We can then compute the covariance matrix as we would on a sparse matrix to limit the number of calculations.
+
+```{r}
+# correlation usign sparse matrix
+sparseSpearmanCor <- function(sparseMat){
+  Y = as(sparseMat, "dgTMatrix")
+  nCells = dim(Y)[2]
+  nRegions = dim(Y)[1]
+  i = Y@i
+  j = Y@j
+  x = Y@x
+  rankColMeans = rep(0, times = nCells)
+  # go through x in row format, replace entries with their ranks, then add #zeros/2 -1/2
+  for(k in unique(j)){
+    w = which(j == k)
+    r = rank(x[w])
+    z = dim(Y)[1] - length(w)
+    r = r + z/2 - 1/2
+    Y@x[w] = r
+    rankColMeans[k + 1] = sum(r)/nRegions
+  }
+  rankColSums = rankColMeans*nRegions
+  covmat = tcrossprod(rankColMeans, (-2*rankColSums + nRegions*rankColMeans))
+  crosspmat = as.matrix(Matrix::crossprod(Y))
+  covmat = covmat + crosspmat
+  sdvec = sqrt(diag(covmat))
+  return(covmat/crossprod(t(sdvec)))
+}
+system.time(testCor3 <- sparseSpearmanCor(X.sparse))
+all.equal(c(as.matrix(testCor)), c(as.matrix(testCor3)))
+```
