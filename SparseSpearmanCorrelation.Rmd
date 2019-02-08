@@ -105,3 +105,17 @@ sparseSpearmanCor <- function(sparseMat){
 system.time(testCor3 <- sparseSpearmanCor(X.sparse))
 all.equal(c(as.matrix(testCor)), c(as.matrix(testCor3)))
 ```
+
+The main advantage of this approach is that it's memory efficient.  We avoid creating a full copy of the sparse matrix, as is done when you use apply or any variant thereof to the input matrix. Below is an example from the Sherlock cluster with 64Gb of allocated memory. 
+
+```{r eval = FALSE}
+> system.time(testCor2 <- sparseSpearmanCor(ForegroundMatrix))
+Loading required package: Matrix
+    user   system  elapsed 
+2033.380 2097.197 4149.235 
+
+> system.time(testCor <- cor(as.matrix(ForegroundMatrix), method = "spearman"))
+Error in asMethod(object) : 
+  Cholmod error 'problem too large' at file ../Core/cholmod_dense.c, line 105
+Timing stopped at: 0.094 0.024 0.123
+```
